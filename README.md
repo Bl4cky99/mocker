@@ -11,9 +11,9 @@
         <br/>
         Define endpoints in YAML/JSON, serve multiple variants, enforce request contracts, and explore responses with real-time templating helpers.
         <br/><br/>
-        <a href="https://github.com/Bl4cky99/mocker/issues/new?labels=bug&template=bug_report.md">Report Bug</a>
+        <a href="https://github.com/Bl4cky99/mocker/issues/new?template=bug_report.yml">Report Bug</a>
         &middot;
-        <a href="https://github.com/Bl4cky99/mocker/issues/new?labels=enhancement&template=feature_request.md">Request Feature</a>
+        <a href="https://github.com/Bl4cky99/mocker/issues/new?template=feature_request.yml">Request Feature</a>
         <br/><br/>
     </p>
 </div>
