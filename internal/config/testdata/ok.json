@@ -1,0 +1,24 @@
+{
+    "server": {
+        "addr": ":9090",
+        "basePath": "/api"
+    },
+    "auth": {
+        "type": "none"
+    },
+    "endpoints": [
+        {
+            "method": "GET",
+            "path": "/status",
+            "responses": [
+                {
+                    "status": 200,
+                    "headers": {
+                        "Content-Type": "application/json"
+                    },
+                    "body": "{\"status\":\"up\"}"
+                }
+            ]
+        }
+    ]
+}

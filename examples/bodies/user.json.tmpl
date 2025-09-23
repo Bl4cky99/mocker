@@ -1,0 +1,9 @@
+{
+  "id": "{{ .Path.id }}",
+  "name": "User {{ .Path.id }}",
+  "verbose": {{ if eq .Query.verbose "true" }}true{{ else }}false{{ end }},
+  "correlationId": {{ if index .Header "X-Correlation-Id" -}}
+    "{{ index .Header "X-Correlation-Id" }}"
+  {{- else -}} null {{- end }},
+  "now": "{{ .NowRFC3339 }}"
+}

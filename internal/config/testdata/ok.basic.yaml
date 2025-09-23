@@ -1,0 +1,9 @@
+endpoints:
+  - method: "GET"
+    path: "/healthz"
+    responses:
+      - status: 200
+        headers:
+          Content-Type: "application/json"
+        body: |
+          {"ok":true}

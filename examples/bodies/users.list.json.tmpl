@@ -1,0 +1,8 @@
+{
+  "page": {{ if .Query.page }}"{{ .Query.page }}"{{ else }}"1"{{ end }},
+  "search": {{ if .Query.search }}"{{ .Query.search }}"{{ else }}null{{ end }},
+  "items": [
+    { "id": "u_100", "name": "Alice" },
+    { "id": "u_101", "name": "Bob" }
+  ]
+}

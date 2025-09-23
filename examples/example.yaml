@@ -1,0 +1,112 @@
+server:
+  addr: ":1337"
+  basePath: "/api"
+  cors:
+    enabled: true
+    allowOrigins: ["*"]
+  defaultHeaders:
+    X-Powered-By: "mocker"
+    Cache-Control: "no-store"
+
+auth:
+  type: "token"
+  token:
+    header: "Authorization"
+    prefix: "Bearer "
+    tokens: ["devtoken123"]
+
+endpoints:
+  - method: "GET"
+    path: "/healthz"
+    responses:
+      - status: 200
+        headers: { Content-Type: "application/json" }
+        bodyFile: "./examples/bodies/health.json"
+
+  - method: "GET"
+    path: "/users"
+    responses:
+      - when:
+          query: { search: "alice" }
+        status: 200
+        headers: { Content-Type: "application/json" }
+        bodyFile: "./examples/bodies/users.list.json.tmpl"
+      - status: 200
+        headers: { Content-Type: "application/json" }
+        bodyFile: "./examples/bodies/users.list.json.tmpl"
+
+  - method: "GET"
+    path: "/users/{id}"
+    responses:
+      - when:
+          query: { verbose: "true" }
+        status: 200
+        headers: { Content-Type: "application/json" }
+        bodyFile: "./examples/bodies/user.json.tmpl"
+      - status: 200
+        headers: { Content-Type: "application/json" }
+        delayMs: 120
+        bodyFile: "./examples/bodies/user.json.tmpl"
+
+  - method: "POST"
+    path: "/users"
+    validate:
+      contentType: "application/json"
+      schemaFile: "./examples/schemas/user.create.json"
+    responses:
+      - status: 201
+        headers: { Content-Type: "application/json" }
+        bodyFile: "./examples/bodies/user.created.json.tmpl"
+
+  - method: "PUT"
+    path: "/users/{id}"
+    validate:
+      contentType: "application/json"
+      schemaFile: "./examples/schemas/user.update.json"
+    responses:
+      - status: 200
+        headers: { Content-Type: "application/json" }
+        bodyFile: "./examples/bodies/echo.json.tmpl"
+
+  - method: "DELETE"
+    path: "/users/{id}"
+    responses:
+      - status: 204
+        headers: { Content-Type: "application/json" }
+        body: ""
+
+  - method: "GET"
+    path: "/orders/{id}"
+    responses:
+      - when:
+          header: { X-Debug: "1" }
+        status: 200
+        headers: { Content-Type: "application/json" }
+        body: |
+          {
+            "id": "{{ .Path.id }}",
+            "debug": true,
+            "now": "{{ .NowRFC3339 }}"
+          }
+      - status: 200
+        headers: { Content-Type: "application/json" }
+        body: |
+          { "id": "{{ .Path.id }}", "debug": false }
+
+  - method: "POST"
+    path: "/orders"
+    validate:
+      contentType: "application/json"
+      schemaFile: "./examples/schemas/order.create.json"
+    responses:
+      - status: 201
+        headers: { Content-Type: "application/json" }
+        bodyFile: "./examples/bodies/order.created.json.tmpl"
+
+  - method: "GET"
+    path: "/slow"
+    responses:
+      - status: 200
+        headers: { Content-Type: "application/json" }
+        delayMs: 500
+        bodyFile: "./examples/bodies/slow.json.tmpl"

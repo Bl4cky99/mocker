@@ -1,0 +1,7 @@
+endpoints:
+  - method: "GET"
+    path: "/double"
+    responses:
+      - status: 200
+        body: "inline"
+        bodyFile: "./internal/config/testdata/does-not-exist.json"

@@ -1,0 +1,36 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "UserCreate",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "name",
+        "email"
+    ],
+    "properties": {
+        "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+        },
+        "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+        },
+        "age": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 150
+        },
+        "tags": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "minLength": 1
+            },
+            "uniqueItems": true,
+            "maxItems": 20
+        }
+    }
+}

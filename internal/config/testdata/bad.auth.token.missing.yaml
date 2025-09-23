@@ -1,0 +1,12 @@
+auth:
+  type: "token"
+  token:
+    header: "Authorization"
+    prefix: "Bearer "
+    tokens: []
+endpoints:
+  - method: "GET"
+    path: "/ping"
+    responses:
+      - status: 200
+        body: "pong"

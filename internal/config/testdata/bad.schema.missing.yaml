@@ -1,0 +1,12 @@
+endpoints:
+  - method: "POST"
+    path: "/users"
+    validate:
+      contentType: "application/json"
+      schemaFile: "./nope/missing.schema.json"
+    responses:
+      - status: 201
+        headers:
+          Content-Type: "application/json"
+        body: |
+          {"created":true}

@@ -1,0 +1,6 @@
+endpoints:
+  - method: "GET"
+    path: "/oops"
+    responses:
+      - status: 900
+        body: "nope"

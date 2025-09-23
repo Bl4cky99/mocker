@@ -1,0 +1,1 @@
+this is not yaml or json and should fail by extension
