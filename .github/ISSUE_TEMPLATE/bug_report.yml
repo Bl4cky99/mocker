@@ -1,5 +1,5 @@
 name: "🐛 Bug report"
-description: Report a reproducible problem with caddy-redirector
+description: Report a reproducible problem with mocker
 title: "[bug] <short summary>"
 labels: ["bug", "needs-triage"]
 assignees: []
@@ -28,15 +28,6 @@ body:
       label: Module version
       description: Git tag (e.g., v1.0.0) or commit SHA
       placeholder: v1.0.0
-    validations:
-      required: true
-
-  - type: input
-    id: caddy-version
-    attributes:
-      label: Caddy version
-      description: Output of `caddy version`
-      placeholder: v2.10.x
     validations:
       required: true
 
@@ -111,20 +102,19 @@ body:
   - type: textarea
     id: config
     attributes:
-      label: Minimal Caddyfile or config
+      label: Minimal Config files
       description: Provide the smallest possible config that reproduces the issue.
       render: shell
       placeholder: |
-        :8080
-        route {
-          redirector {
-            status 308
-            host example.com {
-              to_host new.example.com
-              exact /old /new
-            }
-          }
-        }
+        endpoints:
+          - method: "GET"
+            path: "/healthz"
+            responses:
+              - status: 200
+                headers:
+                  Content-Type: "application/json"
+                body: |
+                  {"ok":true}
     validations:
       required: true
 
@@ -132,20 +122,8 @@ body:
     id: logs
     attributes:
       label: Relevant logs
-      description: Include any error messages and how Caddy was started (command/flags/systemd).
+      description: Include any error messages and how mocker was started.
       render: text
-    validations:
-      required: false
-
-  - type: checkboxes
-    id: severity
-    attributes:
-      label: Impact
-      options:
-        - label: Blocks production traffic
-        - label: Performance regression
-        - label: Functional bug
-        - label: Minor / cosmetic
     validations:
       required: false
 

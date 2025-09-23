@@ -25,7 +25,7 @@ body:
       label: Problem to solve
       description: What’s the underlying need or pain point?
       placeholder: |
-        When migrating apps across hosts, I need ...
+        When using mocker i need ...
     validations:
       required: true
 
@@ -33,10 +33,10 @@ body:
     id: proposal
     attributes:
       label: Proposed solution
-      description: API/config syntax, matching logic, examples, expected behavior.
+      description: Template functions, examples, expected behavior.
       placeholder: |
         Proposal:
-        - New directive: ...
+        - New template function: ...
         - Example config:
         - Expected behavior:
     validations:
