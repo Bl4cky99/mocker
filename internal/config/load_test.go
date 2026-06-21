@@ -4,397 +4,23 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/Bl4cky99/mocker/internal/errx"
 )
 
-func TestLoad(t *testing.T) {
-	tests := []struct {
-		name    string
-		file    string
-		wantErr bool
-		wantIs  []error
-		wantSub []string
-		check   func(t *testing.T, cfg *Config)
-	}{
-		{
-			"ok basic yaml",
-			"ok.basic.yaml",
-			false,
-			nil,
-			nil,
-			func(t *testing.T, c *Config) {
-				if c.Server.Addr != ":8080" {
-					t.Fatalf("default addr: %v, expected ':8080'", c.Server.Addr)
-				}
-				if c.Server.BasePath != "/" {
-					t.Fatalf("default base-path: %v, expected '/'", c.Server.BasePath)
-				}
-				if c.Server.DefaultHeaders == nil {
-					t.Fatalf("default headers: %v, expected empty map", c.Server.DefaultHeaders)
-				}
-				if c.Auth.Type == "" {
-					t.Fatalf("auth type default not applied")
-				}
-				if len(c.Endpoints) != 1 {
-					t.Fatalf("expected 1 endpoint, got %d", len(c.Endpoints))
-				}
-			},
-		},
-		{
-			"ok json",
-			"ok.json",
-			false,
-			nil,
-			nil,
-			func(t *testing.T, c *Config) {
-				if c.Server.Addr != ":9090" {
-					t.Fatalf("wrong addr: %v, expected ':9090'", c.Server.Addr)
-				}
-				if c.Server.BasePath != "/api" {
-					t.Fatalf("wrong basePath: %v, expected '/api'", c.Server.BasePath)
-				}
-				if c.Auth.Type != "none" {
-					t.Fatalf("wrong auth: %v, expected 'none'", c.Auth.Type)
-				}
-				if c.Endpoints == nil || len(c.Endpoints) != 1 {
-					t.Fatalf("endpoints not parsed correctly")
-				}
-				ep := c.Endpoints[0]
-				if ep.Path != "/status" {
-					t.Fatalf("wrong path: %v, expected '/status'", ep.Path)
-				}
-				if ep.Method != "GET" {
-					t.Fatalf("wrong method for %v, expected 'GET'", ep.Path)
-				}
-			},
-		},
-		{
-			name:    "bad token auth missing tokens",
-			file:    "bad.auth.token.missing.yaml",
-			wantErr: true,
-			wantIs:  []error{ErrAuthConfig},
-			wantSub: []string{"auth.token.tokens", "must not be empty"},
-		},
-		{
-			name:    "bad endpoint status out of range",
-			file:    "bad.endpoint.status.yaml",
-			wantErr: true,
-			wantIs:  []error{ErrEndpointConfig},
-			wantSub: []string{"responses[0].status", "out of range"},
-		},
-		{
-			name:    "bad endpoint body and bodyFile both set",
-			file:    "bad.endpoint.body_both.yaml",
-			wantErr: true,
-			wantIs:  []error{ErrEndpointConfig},
-		},
-		{
-			name:    "bad schema file missing",
-			file:    "bad.schema.missing.yaml",
-			wantErr: true,
-			wantIs:  []error{ErrSchemaRef},
-			wantSub: []string{"validate.schemaFile", "not found"},
-		},
-		{
-			name:    "bad unknown extension",
-			file:    "bad.unknown_ext.txt",
-			wantErr: true,
-			wantIs:  []error{ErrUnsupportedExt},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := Load(filepath.Join("testdata", tc.file))
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected error")
-				}
-				if len(tc.wantIs) > 0 && !errx.ErrIsAll(err, tc.wantIs...) {
-					t.Fatalf("error %q does not match sentinels %v", err, tc.wantIs)
-				}
-				if len(tc.wantSub) > 0 && !errx.ErrContainsAll(err, tc.wantSub...) {
-					t.Fatalf("error %q does not contain %v", err, tc.wantSub)
-				}
-			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				if tc.check != nil {
-					tc.check(t, cfg)
-				}
-			}
-		})
-	}
+func writeTemp(name, content string) string {
+	return writeTempAt(GinkgoT().TempDir(), name, content)
 }
 
-func TestLoadErrors(t *testing.T) {
-	t.Run("empty path", func(t *testing.T) {
-		if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "empty config path") {
-			t.Fatalf("expected empty path error, got %v", err)
-		}
-	})
-
-	t.Run("missing file", func(t *testing.T) {
-		if _, err := Load(filepath.Join("testdata", "does-not-exist.yaml")); err == nil || !strings.Contains(err.Error(), "read") {
-			t.Fatalf("expected read error, got %v", err)
-		}
-	})
-
-	t.Run("yaml decode unknown field", func(t *testing.T) {
-		p := writeTemp(t, "bad.yaml", "server:\n  invalid: true\n")
-		if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "yaml decode") {
-			t.Fatalf("expected yaml decode error, got %v", err)
-		}
-	})
-
-	t.Run("json decode unknown field", func(t *testing.T) {
-		p := writeTemp(t, "bad.json", "{\"server\":{\"invalid\":true}}")
-		if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "json decode") {
-			t.Fatalf("expected json decode error, got %v", err)
-		}
-	})
-}
-
-func TestConfigApplyDefaults(t *testing.T) {
-	cfg := Config{
-		Endpoints: []Endpoint{{
-			Method: "GET",
-			Path:   "/",
-			Responses: []ResponseVariant{{
-				Status: 200,
-				Body:   "ok",
-			}},
-		}},
-		Server: ServerConfig{
-			CORS: &CORSConfig{Enabled: true},
-		},
-	}
-
-	cfg.ApplyDefaults()
-
-	if cfg.Server.Addr != ":8080" {
-		t.Fatalf("addr default missing: %s", cfg.Server.Addr)
-	}
-	if cfg.Server.BasePath != "/" {
-		t.Fatalf("base path default missing: %s", cfg.Server.BasePath)
-	}
-	if cfg.Server.DefaultHeaders == nil {
-		t.Fatalf("default headers not initialised")
-	}
-	if cfg.Server.CORS.AllowMethods == nil || len(cfg.Server.CORS.AllowMethods) == 0 {
-		t.Fatalf("cors methods default missing")
-	}
-	if cfg.Server.CORS.AllowHeaders == nil {
-		t.Fatalf("cors headers default missing")
-	}
-	if cfg.Server.CORS.AllowOrigins == nil || len(cfg.Server.CORS.AllowOrigins) == 0 {
-		t.Fatalf("cors origins default missing")
-	}
-	if cfg.Auth.Type != "none" {
-		t.Fatalf("auth type default missing: %s", cfg.Auth.Type)
-	}
-}
-
-func TestConfigValidate(t *testing.T) {
-	shared := t.TempDir()
-	bodyFile := writeTempAt(t, shared, "body.json", "{}")
-	schemaFile := writeTempAt(t, shared, "schema.json", "{}")
-
-	valid := Config{
-		Server: ServerConfig{BasePath: "/"},
-		Auth:   AuthConfig{Type: "none"},
-		Endpoints: []Endpoint{{
-			Method: "GET",
-			Path:   "/ok",
-			Validate: &ValidateSpec{
-				ContentType: "application/json",
-				SchemaFile:  schemaFile,
-			},
-			Responses: []ResponseVariant{{
-				Status:   200,
-				BodyFile: bodyFile,
-				When:     &WhenClause{Query: map[string]string{"foo": "bar"}},
-			}},
-		}},
-	}
-
-	if err := valid.Validate(); err != nil {
-		t.Fatalf("expected valid config, got %v", err)
-	}
-
-	tests := []struct {
-		name string
-		cfg  Config
-		want []string
-	}{
-		{
-			name: "invalid auth type",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Auth.Type = "oauth"
-				return c
-			}(),
-			want: []string{"auth.type"},
-		},
-		{
-			name: "token header empty",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Auth.Type = "token"
-				c.Auth.Token = &TokenAuthConfig{Tokens: []string{"a"}}
-				return c
-			}(),
-			want: []string{"auth.token.header"},
-		},
-		{
-			name: "basic config missing",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Auth.Type = "basic"
-				c.Auth.Token = nil
-				c.Auth.Basic = nil
-				return c
-			}(),
-			want: []string{"auth.type=basic"},
-		},
-		{
-			name: "basic user empty",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Auth.Type = "basic"
-				c.Auth.Basic = &BasicAuthConfig{Users: []BasicUser{{Username: "", Password: ""}}}
-				return c
-			}(),
-			want: []string{"auth.basic.users[0]"},
-		},
-		{
-			name: "base path missing slash",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Server.BasePath = "api"
-				return c
-			}(),
-			want: []string{"server.basePath"},
-		},
-		{
-			name: "no endpoints",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Endpoints = nil
-				return c
-			}(),
-			want: []string{"at least one endpoint"},
-		},
-		{
-			name: "duplicate endpoint",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Endpoints[0].Responses[0].When = nil
-				c.Endpoints = append(c.Endpoints, cloneEndpoint(c.Endpoints[0]))
-				return c
-			}(),
-			want: []string{"duplicate endpoint"},
-		},
-		{
-			name: "invalid method",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Endpoints[0].Method = "TRACE"
-				return c
-			}(),
-			want: []string{"method"},
-		},
-		{
-			name: "path missing slash",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Endpoints[0].Path = "status"
-				return c
-			}(),
-			want: []string{"path must"},
-		},
-		{
-			name: "no responses",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Endpoints[0].Responses = nil
-				return c
-			}(),
-			want: []string{"must have at least one response"},
-		},
-		{
-			name: "body missing both",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				r := &c.Endpoints[0].Responses[0]
-				r.Body = ""
-				r.BodyFile = ""
-				return c
-			}(),
-			want: []string{"set exactly one of body or bodyFile"},
-		},
-		{
-			name: "body file missing",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Endpoints[0].Responses[0].BodyFile = filepath.Join(shared, "nope.json")
-				return c
-			}(),
-			want: []string{"bodyFile"},
-		},
-		{
-			name: "invalid content type",
-			cfg: func() Config {
-				c := cloneConfig(valid)
-				c.Endpoints[0].Validate.ContentType = "not/a type"
-				return c
-			}(),
-			want: []string{"contentType"},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := tc.cfg.Validate(); err == nil {
-				t.Fatalf("expected validation error")
-			} else {
-				for _, want := range tc.want {
-					if !strings.Contains(err.Error(), want) {
-						t.Fatalf("error %q missing substring %q", err, want)
-					}
-				}
-			}
-		})
-	}
-}
-
-func TestEpHasNoWhen(t *testing.T) {
-	ep := Endpoint{Responses: []ResponseVariant{{When: &WhenClause{Header: map[string]string{"x": "1"}}}}}
-	if epHasNoWhen(ep) {
-		t.Fatalf("expected epHasNoWhen to be false when when clauses exist")
-	}
-	ep.Responses[0].When = nil
-	if !epHasNoWhen(ep) {
-		t.Fatalf("expected epHasNoWhen to be true without when clauses")
-	}
-}
-
-func writeTemp(t *testing.T, name, content string) string {
-	return writeTempAt(t, t.TempDir(), name, content)
-}
-
-func writeTempAt(t *testing.T, dir, name, content string) string {
-	t.Helper()
+func writeTempAt(dir, name, content string) string {
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
+	Expect(os.WriteFile(path, []byte(content), 0o600)).To(Succeed())
 	return path
 }
 
@@ -450,3 +76,275 @@ func cloneResponse(rv ResponseVariant) ResponseVariant {
 	}
 	return copyRv
 }
+
+var _ = Describe("Load", func() {
+	DescribeTable("loads config files",
+		func(file string, wantErr bool, wantIs []error, wantSub []string, check func(*Config)) {
+			cfg, err := Load(filepath.Join("testdata", file))
+			if wantErr {
+				Expect(err).To(HaveOccurred())
+				for _, sentinel := range wantIs {
+					Expect(errors.Is(err, sentinel)).To(BeTrue(),
+						"error %q does not wrap sentinel %v", err, sentinel)
+				}
+				Expect(errx.ErrContainsAll(err, wantSub...)).To(BeTrue(),
+					"error %q missing substrings %v", err, wantSub)
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+				if check != nil {
+					check(cfg)
+				}
+			}
+		},
+		Entry("ok basic yaml", "ok.basic.yaml", false, nil, nil,
+			func(c *Config) {
+				Expect(c.Server.Addr).To(Equal(":8080"))
+				Expect(c.Server.BasePath).To(Equal("/"))
+				Expect(c.Server.DefaultHeaders).NotTo(BeNil())
+				Expect(c.Auth.Type).NotTo(BeEmpty())
+				Expect(c.Endpoints).To(HaveLen(1))
+			},
+		),
+		Entry("ok json", "ok.json", false, nil, nil,
+			func(c *Config) {
+				Expect(c.Server.Addr).To(Equal(":9090"))
+				Expect(c.Server.BasePath).To(Equal("/api"))
+				Expect(c.Auth.Type).To(Equal("none"))
+				Expect(c.Endpoints).To(HaveLen(1))
+				Expect(c.Endpoints[0].Path).To(Equal("/status"))
+				Expect(c.Endpoints[0].Method).To(Equal("GET"))
+			},
+		),
+		Entry("bad token auth missing tokens",
+			"bad.auth.token.missing.yaml", true,
+			[]error{ErrAuthConfig},
+			[]string{"auth.token.tokens", "must not be empty"},
+			nil,
+		),
+		Entry("bad endpoint status out of range",
+			"bad.endpoint.status.yaml", true,
+			[]error{ErrEndpointConfig},
+			[]string{"responses[0].status", "out of range"},
+			nil,
+		),
+		Entry("bad endpoint body and bodyFile both set",
+			"bad.endpoint.body_both.yaml", true,
+			[]error{ErrEndpointConfig},
+			[]string(nil),
+			nil,
+		),
+		Entry("bad schema file missing",
+			"bad.schema.missing.yaml", true,
+			[]error{ErrSchemaRef},
+			[]string{"validate.schemaFile", "not found"},
+			nil,
+		),
+		Entry("bad unknown extension",
+			"bad.unknown_ext.txt", true,
+			[]error{ErrUnsupportedExt},
+			[]string(nil),
+			nil,
+		),
+	)
+
+	Context("error cases", func() {
+		It("returns error for empty path", func() {
+			_, err := Load("")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("empty config path"))
+		})
+
+		It("returns error for missing file", func() {
+			_, err := Load(filepath.Join("testdata", "does-not-exist.yaml"))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("read"))
+		})
+
+		It("returns error for yaml with unknown field", func() {
+			p := writeTemp("bad.yaml", "server:\n  invalid: true\n")
+			_, err := Load(p)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("yaml decode"))
+		})
+
+		It("returns error for json with unknown field", func() {
+			p := writeTemp("bad.json", `{"server":{"invalid":true}}`)
+			_, err := Load(p)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("json decode"))
+		})
+	})
+})
+
+var _ = Describe("Config.ApplyDefaults", func() {
+	It("fills in all default values", func() {
+		cfg := Config{
+			Endpoints: []Endpoint{{
+				Method: "GET",
+				Path:   "/",
+				Responses: []ResponseVariant{{
+					Status: 200,
+					Body:   "ok",
+				}},
+			}},
+			Server: ServerConfig{
+				CORS: &CORSConfig{Enabled: true},
+			},
+		}
+
+		cfg.ApplyDefaults()
+
+		Expect(cfg.Server.Addr).To(Equal(":8080"))
+		Expect(cfg.Server.BasePath).To(Equal("/"))
+		Expect(cfg.Server.DefaultHeaders).NotTo(BeNil())
+		Expect(cfg.Server.CORS.AllowMethods).NotTo(BeEmpty())
+		Expect(cfg.Server.CORS.AllowHeaders).NotTo(BeNil())
+		Expect(cfg.Server.CORS.AllowOrigins).NotTo(BeEmpty())
+		Expect(cfg.Auth.Type).To(Equal("none"))
+	})
+})
+
+var _ = Describe("Config.Validate", func() {
+	var (
+		shared     string
+		bodyFile   string
+		schemaFile string
+		valid      Config
+	)
+
+	BeforeEach(func() {
+		shared = GinkgoT().TempDir()
+		bodyFile = writeTempAt(shared, "body.json", "{}")
+		schemaFile = writeTempAt(shared, "schema.json", "{}")
+		valid = Config{
+			Server: ServerConfig{BasePath: "/"},
+			Auth:   AuthConfig{Type: "none"},
+			Endpoints: []Endpoint{{
+				Method: "GET",
+				Path:   "/ok",
+				Validate: &ValidateSpec{
+					ContentType: "application/json",
+					SchemaFile:  schemaFile,
+				},
+				Responses: []ResponseVariant{{
+					Status:   200,
+					BodyFile: bodyFile,
+					When:     &WhenClause{Query: map[string]string{"foo": "bar"}},
+				}},
+			}},
+		}
+	})
+
+	It("accepts a fully valid config", func() {
+		Expect(valid.Validate()).To(Succeed())
+	})
+
+	DescribeTable("rejects invalid configs",
+		func(makeCfg func() Config, wantSubs []string) {
+			cfg := makeCfg()
+			err := cfg.Validate()
+			Expect(err).To(HaveOccurred())
+			for _, sub := range wantSubs {
+				Expect(err.Error()).To(ContainSubstring(sub))
+			}
+		},
+		Entry("invalid auth type",
+			func() Config { c := cloneConfig(valid); c.Auth.Type = "oauth"; return c },
+			[]string{"auth.type"},
+		),
+		Entry("token header empty",
+			func() Config {
+				c := cloneConfig(valid)
+				c.Auth.Type = "token"
+				c.Auth.Token = &TokenAuthConfig{Tokens: []string{"a"}}
+				return c
+			},
+			[]string{"auth.token.header"},
+		),
+		Entry("basic config missing",
+			func() Config {
+				c := cloneConfig(valid)
+				c.Auth.Type = "basic"
+				c.Auth.Token = nil
+				c.Auth.Basic = nil
+				return c
+			},
+			[]string{"auth.type=basic"},
+		),
+		Entry("basic user empty",
+			func() Config {
+				c := cloneConfig(valid)
+				c.Auth.Type = "basic"
+				c.Auth.Basic = &BasicAuthConfig{Users: []BasicUser{{Username: "", Password: ""}}}
+				return c
+			},
+			[]string{"auth.basic.users[0]"},
+		),
+		Entry("base path missing leading slash",
+			func() Config { c := cloneConfig(valid); c.Server.BasePath = "api"; return c },
+			[]string{"server.basePath"},
+		),
+		Entry("no endpoints",
+			func() Config { c := cloneConfig(valid); c.Endpoints = nil; return c },
+			[]string{"at least one endpoint"},
+		),
+		Entry("duplicate endpoint",
+			func() Config {
+				c := cloneConfig(valid)
+				c.Endpoints[0].Responses[0].When = nil
+				c.Endpoints = append(c.Endpoints, cloneEndpoint(c.Endpoints[0]))
+				return c
+			},
+			[]string{"duplicate endpoint"},
+		),
+		Entry("invalid method",
+			func() Config { c := cloneConfig(valid); c.Endpoints[0].Method = "TRACE"; return c },
+			[]string{"method"},
+		),
+		Entry("path missing leading slash",
+			func() Config { c := cloneConfig(valid); c.Endpoints[0].Path = "status"; return c },
+			[]string{"path must"},
+		),
+		Entry("no responses",
+			func() Config { c := cloneConfig(valid); c.Endpoints[0].Responses = nil; return c },
+			[]string{"must have at least one response"},
+		),
+		Entry("body and bodyFile both missing",
+			func() Config {
+				c := cloneConfig(valid)
+				c.Endpoints[0].Responses[0].Body = ""
+				c.Endpoints[0].Responses[0].BodyFile = ""
+				return c
+			},
+			[]string{"set exactly one of body or bodyFile"},
+		),
+		Entry("body file does not exist",
+			func() Config {
+				c := cloneConfig(valid)
+				c.Endpoints[0].Responses[0].BodyFile = filepath.Join(shared, "nope.json")
+				return c
+			},
+			[]string{"bodyFile"},
+		),
+		Entry("invalid content type",
+			func() Config {
+				c := cloneConfig(valid)
+				c.Endpoints[0].Validate.ContentType = "not/a type"
+				return c
+			},
+			[]string{"contentType"},
+		),
+	)
+})
+
+var _ = Describe("epHasNoWhen", func() {
+	It("returns false when at least one response has a when clause", func() {
+		ep := Endpoint{Responses: []ResponseVariant{{When: &WhenClause{Header: map[string]string{"x": "1"}}}}}
+		Expect(epHasNoWhen(ep)).To(BeFalse())
+	})
+
+	It("returns true when no responses have a when clause", func() {
+		ep := Endpoint{Responses: []ResponseVariant{{When: nil}}}
+		Expect(epHasNoWhen(ep)).To(BeTrue())
+	})
+})

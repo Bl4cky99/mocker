@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Jason Giese (Bl4cky99)
+
+package validate
+
+import (
+	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+func TestValidate(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Validate Suite")
+}
