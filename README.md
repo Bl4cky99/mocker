@@ -448,7 +448,7 @@ curl -H 'Authorization: Bearer devtoken123' http://localhost:1337/api/healthz
 
 This project is licensed under the **MIT License**.
 
-- Copyright (c) 2025 [Jason Giese (Bl4cky99)](https://github.com/Bl4cky99)
+- Copyright (c) 2025-2026 [Jason Giese (Bl4cky99)](https://github.com/Bl4cky99)
 - See the full text in [LICENSE](./LICENSE).
 
 **Notes for users and integrators**
