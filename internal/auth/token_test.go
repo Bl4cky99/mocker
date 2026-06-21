@@ -5,100 +5,74 @@ package auth
 
 import (
 	"net/http/httptest"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/Bl4cky99/mocker/internal/errx"
 )
 
-func TestTokenAuth(t *testing.T) {
-	tests := []struct {
-		name    string
-		header  string
-		build   func() (*TokenAuth, string)
-		wantOK  bool
-		wantErr bool
-		wantSub []string
-	}{
-		{
-			name:   "missing header => not authenticated",
-			header: "",
-			build: func() (*TokenAuth, string) {
-				return NewTokenAuth("Authorization", "Bearer ", []string{"devtoken123", "secret2"}), "Authorization"
-			},
-			wantOK:  false,
-			wantErr: false,
-		},
-		{
-			name:   "wrong prefix",
-			header: "Token devtoken123",
-			build: func() (*TokenAuth, string) {
-				return NewTokenAuth("Authorization", "Bearer ", []string{"devtoken123"}), "Authorization"
-			},
-			wantOK:  false,
-			wantErr: false,
-		},
-		{
-			name:   "wrong token with right prefix",
-			header: "Bearer nope",
-			build: func() (*TokenAuth, string) {
-				return NewTokenAuth("Authorization", "Bearer ", []string{"devtoken123"}), "Authorization"
-			},
-			wantOK:  false,
-			wantErr: false,
-		},
-		{
-			name:   "correct token",
-			header: "Bearer devtoken123",
-			build: func() (*TokenAuth, string) {
-				return NewTokenAuth("Authorization", "Bearer ", []string{"devtoken123"}), "Authorization"
-			},
-			wantOK:  true,
-			wantErr: false,
-		},
-		{
-			name:   "extra spaces after prefix are trimmed",
-			header: "Bearer   devtoken123   ",
-			build: func() (*TokenAuth, string) {
-				return NewTokenAuth("Authorization", "Bearer ", []string{"devtoken123"}), "Authorization"
-			},
-			wantOK:  true,
-			wantErr: false,
-		},
-		{
-			name:   "custom header without prefix",
-			header: "t1",
-			build: func() (*TokenAuth, string) {
-				return NewTokenAuth("X-Token", "", []string{"t1"}), "X-Token"
-			},
-			wantOK:  true,
-			wantErr: false,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			prov, headerName := tc.build()
+var _ = Describe("TokenAuth", func() {
+	DescribeTable("Authenticate",
+		func(header string, build func() (*TokenAuth, string), wantOK, wantErr bool, wantSub []string) {
+			prov, headerName := build()
 			req := httptest.NewRequest("GET", "http://example.com/x", nil)
-			if tc.header != "" {
-				req.Header.Set(headerName, tc.header)
+			if header != "" {
+				req.Header.Set(headerName, header)
 			}
 			_, ok, err := prov.Authenticate(req)
 
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected error")
-				}
-				if len(tc.wantSub) > 0 && !errx.ErrContainsAll(err, tc.wantSub...) {
-					t.Fatalf("error %q does not contain %v", err, tc.wantSub)
+			if wantErr {
+				Expect(err).To(HaveOccurred())
+				if len(wantSub) > 0 {
+					Expect(errx.ErrContainsAll(err, wantSub...)).To(BeTrue())
 				}
 			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+				Expect(err).NotTo(HaveOccurred())
 			}
-			if ok != tc.wantOK {
-				t.Fatalf("auth ok=%v, want %v", ok, tc.wantOK)
-			}
-		})
-	}
-}
+			Expect(ok).To(Equal(wantOK))
+		},
+		Entry("missing header => not authenticated",
+			"",
+			func() (*TokenAuth, string) {
+				return NewTokenAuth("Authorization", "Bearer ", []string{"devtoken123", "secret2"}), "Authorization"
+			},
+			false, false, []string(nil),
+		),
+		Entry("wrong prefix",
+			"Token devtoken123",
+			func() (*TokenAuth, string) {
+				return NewTokenAuth("Authorization", "Bearer ", []string{"devtoken123"}), "Authorization"
+			},
+			false, false, []string(nil),
+		),
+		Entry("wrong token with right prefix",
+			"Bearer nope",
+			func() (*TokenAuth, string) {
+				return NewTokenAuth("Authorization", "Bearer ", []string{"devtoken123"}), "Authorization"
+			},
+			false, false, []string(nil),
+		),
+		Entry("correct token",
+			"Bearer devtoken123",
+			func() (*TokenAuth, string) {
+				return NewTokenAuth("Authorization", "Bearer ", []string{"devtoken123"}), "Authorization"
+			},
+			true, false, []string(nil),
+		),
+		Entry("extra spaces after prefix are trimmed",
+			"Bearer   devtoken123   ",
+			func() (*TokenAuth, string) {
+				return NewTokenAuth("Authorization", "Bearer ", []string{"devtoken123"}), "Authorization"
+			},
+			true, false, []string(nil),
+		),
+		Entry("custom header without prefix",
+			"t1",
+			func() (*TokenAuth, string) {
+				return NewTokenAuth("X-Token", "", []string{"t1"}), "X-Token"
+			},
+			true, false, []string(nil),
+		),
+	)
+})

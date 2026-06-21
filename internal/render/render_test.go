@@ -6,68 +6,51 @@ package render
 import (
 	"os"
 	"path/filepath"
-	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestRenderFileCachesAndReloads(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.tmpl")
+var _ = Describe("Renderer", func() {
+	Describe("RenderFile", func() {
+		It("caches templates and reloads on file modification", func() {
+			dir := GinkgoT().TempDir()
+			path := filepath.Join(dir, "test.tmpl")
 
-	if err := os.WriteFile(path, []byte("hello {{.Name}}"), 0o600); err != nil {
-		t.Fatalf("write template: %v", err)
-	}
+			Expect(os.WriteFile(path, []byte("hello {{.Name}}"), 0o600)).To(Succeed())
 
-	r := New()
+			r := New()
 
-	out, err := r.RenderFile(path, map[string]string{"Name": "world"})
-	if err != nil {
-		t.Fatalf("first render: %v", err)
-	}
-	if string(out) != "hello world" {
-		t.Fatalf("unexpected output: %s", out)
-	}
+			out, err := r.RenderFile(path, map[string]string{"Name": "world"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal("hello world"))
 
-	time.Sleep(10 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 
-	if err := os.WriteFile(path, []byte("hi {{.Name}}"), 0o600); err != nil {
-		t.Fatalf("rewrite template: %v", err)
-	}
+			Expect(os.WriteFile(path, []byte("hi {{.Name}}"), 0o600)).To(Succeed())
+			future := time.Now().Add(2 * time.Second)
+			Expect(os.Chtimes(path, future, future)).To(Succeed())
 
-	future := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(path, future, future); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
+			out, err = r.RenderFile(path, map[string]string{"Name": "again"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal("hi again"))
+		})
+	})
 
-	out, err = r.RenderFile(path, map[string]string{"Name": "again"})
-	if err != nil {
-		t.Fatalf("second render: %v", err)
-	}
-	if string(out) != "hi again" {
-		t.Fatalf("expected updated template, got: %s", out)
-	}
-}
+	Describe("RenderString", func() {
+		It("renders a template string with data", func() {
+			r := New()
+			out, err := r.RenderString("value={{.V}}", map[string]int{"V": 42})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal("value=42"))
+		})
 
-func TestRenderString(t *testing.T) {
-	r := New()
-
-	out, err := r.RenderString("value={{.V}}", map[string]int{"V": 42})
-	if err != nil {
-		t.Fatalf("render string: %v", err)
-	}
-	if string(out) != "value=42" {
-		t.Fatalf("unexpected inline render: %s", out)
-	}
-}
-
-func TestRenderStringMissingKeyDefaults(t *testing.T) {
-	r := New()
-
-	out, err := r.RenderString("{{.Query.page}}", map[string]map[string]string{"Query": {}})
-	if err != nil {
-		t.Fatalf("render string missing key: %v", err)
-	}
-	if string(out) != "" {
-		t.Fatalf("expected empty string for missing key, got %q", out)
-	}
-}
+		It("defaults missing map keys to empty string", func() {
+			r := New()
+			out, err := r.RenderString("{{.Query.page}}", map[string]map[string]string{"Query": {}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal(""))
+		})
+	})
+})

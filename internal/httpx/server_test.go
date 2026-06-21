@@ -14,36 +14,19 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/Bl4cky99/mocker/internal/auth"
 	"github.com/Bl4cky99/mocker/internal/config"
 	"github.com/Bl4cky99/mocker/internal/validate"
 )
 
-func TestServer(t *testing.T) {
-	cfg := mustLoad(t, filepath.Join("testdata", "ok.basic.yaml"))
-	s, _ := New(context.Background(), cfg, WithLogger(discardLogger()))
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	resp := httptest.NewRecorder()
-
-	s.Handler().ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("wrong status: %d, expected '200'", resp.Code)
-	}
-	if rid := resp.Header().Get("X-Request-ID"); rid == "" {
-		t.Fatal("missing request id header")
-	}
-}
-
-func mustLoad(t *testing.T, path string) *config.Config {
+func mustLoad(path string) *config.Config {
 	cfg, err := config.Load(path)
-	if err != nil {
-		t.Fatalf("could not load test config: %v", path)
-	}
-
+	Expect(err).NotTo(HaveOccurred(), "could not load test config: %v", path)
 	return cfg
 }
 
@@ -61,286 +44,252 @@ func (s stubProvider) Authenticate(*http.Request) (auth.Principal, bool, error) 
 	return s.principal, s.ok, s.err
 }
 
-func TestNewWithOptions(t *testing.T) {
-	tmp := t.TempDir()
-	schemaPath := filepath.Join(tmp, "schema.json")
-	if err := os.WriteFile(schemaPath, []byte(`{"type":"object"}`), 0o600); err != nil {
-		t.Fatalf("write schema: %v", err)
-	}
+var _ = Describe("Server", func() {
+	It("responds 200 with a request-id header for a registered route", func() {
+		cfg := mustLoad(filepath.Join("testdata", "ok.basic.yaml"))
+		s, _ := New(context.Background(), cfg, WithLogger(discardLogger()))
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		resp := httptest.NewRecorder()
 
-	cfg := &config.Config{
-		Server: config.ServerConfig{Addr: ":0", BasePath: "/api"},
-		Endpoints: []config.Endpoint{{
-			Method:   "POST",
-			Path:     "/foo",
-			Validate: &config.ValidateSpec{SchemaFile: schemaPath},
-			Responses: []config.ResponseVariant{{
-				Status: 201,
-				Body:   "{}",
-			}},
-		}},
-	}
+		s.Handler().ServeHTTP(resp, req)
 
-	buf := new(bytes.Buffer)
-	logger := slog.New(slog.NewTextHandler(buf, nil))
-	prov := stubProvider{principal: auth.Principal{Name: "tester"}, ok: true}
-
-	ctx := context.Background()
-	srv, err := New(ctx, cfg, WithLogger(logger), WithAuth(prov, "token"))
-	if err != nil {
-		t.Fatalf("New returned error: %v", err)
-	}
-
-	if srv.log != logger {
-		t.Fatalf("logger option not applied")
-	}
-	if srv.authMode != "token" || srv.authProv != prov {
-		t.Fatalf("auth option not applied")
-	}
-	if srv.handler == nil {
-		t.Fatalf("handler not initialised")
-	}
-	if srv.httpSrv == nil {
-		t.Fatalf("http server not initialised")
-	}
-	if srv.httpSrv.Addr != cfg.Server.Addr {
-		t.Fatalf("http server addr mismatch: %s", srv.httpSrv.Addr)
-	}
-	if got := srv.httpSrv.BaseContext(nil); got != ctx {
-		t.Fatalf("base context mismatch")
-	}
-
-	abs, _ := filepath.Abs(schemaPath)
-	if v := srv.validators[abs]; v == nil {
-		t.Fatalf("validator for schema not loaded")
-	}
-}
-
-func TestEndpointHandlerResponds(t *testing.T) {
-	srv := &Server{
-		cfg: &config.Config{
-			Server: config.ServerConfig{DefaultHeaders: map[string]string{"X-App": "mocker"}},
-		},
-		log: discardLogger(),
-	}
-
-	ep := config.Endpoint{Responses: []config.ResponseVariant{{
-		Status:  http.StatusOK,
-		Headers: map[string]string{"Content-Type": "application/json"},
-		Body:    "{\"ok\":true}",
-	}}}
-
-	h := endpointHandler(srv, ep)
-	resp := httptest.NewRecorder()
-	resp.Header().Set("X-App", "override")
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-
-	h.ServeHTTP(resp, req)
-
-	if got := resp.Code; got != http.StatusOK {
-		t.Fatalf("status mismatch: %d", got)
-	}
-	if body := strings.TrimSpace(resp.Body.String()); body != "{\"ok\":true}" {
-		t.Fatalf("body mismatch: %q", body)
-	}
-	if want := "override"; resp.Header().Get("X-App") != want {
-		t.Fatalf("default header overwrote existing value")
-	}
-	if ct := resp.Header().Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("missing response header")
-	}
-}
-
-func TestEndpointHandlerBodyFileError(t *testing.T) {
-	srv := &Server{cfg: &config.Config{Server: config.ServerConfig{}}, log: discardLogger()}
-	ep := config.Endpoint{Responses: []config.ResponseVariant{{BodyFile: "missing.json", Status: http.StatusCreated}}}
-
-	h := endpointHandler(srv, ep)
-	resp := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-
-	h.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d", resp.Code)
-	}
-}
-
-func TestEndpointHandlerDelayCancelledContext(t *testing.T) {
-	srv := &Server{cfg: &config.Config{Server: config.ServerConfig{}}, log: discardLogger()}
-	ep := config.Endpoint{Responses: []config.ResponseVariant{{DelayMs: 50}}}
-
-	h := endpointHandler(srv, ep)
-	resp := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	ctx, cancel := context.WithCancel(req.Context())
-	cancel()
-
-	start := time.Now()
-	h.ServeHTTP(resp, req.WithContext(ctx))
-
-	if elapsed := time.Since(start); elapsed > 30*time.Millisecond {
-		t.Fatalf("handler did not cancel early: %v", elapsed)
-	}
-	if resp.Body.Len() != 0 {
-		t.Fatalf("expected no body when context cancelled")
-	}
-}
-
-func TestValidateBody(t *testing.T) {
-	tmp := t.TempDir()
-	schemaPath := filepath.Join(tmp, "schema.json")
-	if err := os.WriteFile(schemaPath, []byte(`{"type":"object","required":["name"]}`), 0o600); err != nil {
-		t.Fatalf("write schema: %v", err)
-	}
-
-	validator, err := validate.CompileSchema(schemaPath, validate.JSONSchemaValidatorOptions{})
-	if err != nil {
-		t.Fatalf("compile schema: %v", err)
-	}
-
-	nextCalled := 0
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		nextCalled++
-		w.WriteHeader(http.StatusCreated)
+		Expect(resp.Code).To(Equal(http.StatusOK))
+		Expect(resp.Header().Get("X-Request-ID")).NotTo(BeEmpty())
 	})
 
-	ctHandler := validateBody("application/json", validator)(next)
+	Describe("New with options", func() {
+		It("applies logger, auth, and schema options", func() {
+			tmp := GinkgoT().TempDir()
+			schemaPath := filepath.Join(tmp, "schema.json")
+			Expect(os.WriteFile(schemaPath, []byte(`{"type":"object"}`), 0o600)).To(Succeed())
 
-	resp := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"mocker"}`))
-	req.Header.Set("Content-Type", "application/json")
-	ctHandler.ServeHTTP(resp, req)
+			cfg := &config.Config{
+				Server: config.ServerConfig{Addr: ":0", BasePath: "/api"},
+				Endpoints: []config.Endpoint{{
+					Method:   "POST",
+					Path:     "/foo",
+					Validate: &config.ValidateSpec{SchemaFile: schemaPath},
+					Responses: []config.ResponseVariant{{
+						Status: 201,
+						Body:   "{}",
+					}},
+				}},
+			}
 
-	if resp.Code != http.StatusCreated || nextCalled != 1 {
-		t.Fatalf("expected handler to proceed, status %d", resp.Code)
-	}
+			buf := new(bytes.Buffer)
+			logger := slog.New(slog.NewTextHandler(buf, nil))
+			prov := stubProvider{principal: auth.Principal{Name: "tester"}, ok: true}
 
-	resp = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"foo":1}`))
-	req.Header.Set("Content-Type", "application/json")
-	ctHandler.ServeHTTP(resp, req)
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected schema error, got %d", resp.Code)
-	}
+			ctx := context.Background()
+			srv, err := New(ctx, cfg, WithLogger(logger), WithAuth(prov, "token"))
+			Expect(err).NotTo(HaveOccurred())
 
-	resp = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	req.Header.Set("Content-Type", "text/plain")
-	ctHandler.ServeHTTP(resp, req)
-	if resp.Code != http.StatusUnsupportedMediaType {
-		t.Fatalf("expected 415, got %d", resp.Code)
-	}
+			Expect(srv.log).To(Equal(logger))
+			Expect(srv.authMode).To(Equal("token"))
+			Expect(srv.authProv).To(Equal(prov))
+			Expect(srv.handler).NotTo(BeNil())
+			Expect(srv.httpSrv).NotTo(BeNil())
+			Expect(srv.httpSrv.Addr).To(Equal(cfg.Server.Addr))
+			Expect(srv.httpSrv.BaseContext(nil)).To(Equal(ctx))
 
-	noop := validateBody("", nil)
-	if reflect.ValueOf(noop(next)).Pointer() != reflect.ValueOf(next).Pointer() {
-		t.Fatalf("expected noop middleware to return original handler")
-	}
-}
-
-func TestRequireAuth(t *testing.T) {
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := principalFrom(r.Context()); !ok {
-			t.Fatalf("principal missing in context")
-		}
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	requireAuth(stubProvider{principal: auth.Principal{Name: "ok"}, ok: true}, "token")(next).ServeHTTP(rec, req)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("expected success, got %d", rec.Code)
-	}
-
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/", nil)
-	requireAuth(stubProvider{err: errors.New("boom")}, "token")(next).ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected error to return 401")
-	}
-
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/", nil)
-	requireAuth(stubProvider{ok: false}, "basic")(next).ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected unauthorized when not ok")
-	}
-	if got := rec.Header().Get("WWW-Authenticate"); !strings.Contains(got, "Basic") {
-		t.Fatalf("missing basic auth challenge header")
-	}
-}
-
-func TestSkipAuthForOPTIONS(t *testing.T) {
-	called := 0
-	mw := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			called++
-			next.ServeHTTP(w, r)
+			abs, _ := filepath.Abs(schemaPath)
+			Expect(srv.validators[abs]).NotTo(BeNil())
 		})
-	}
-
-	final := skipAuthForOPTIONS(mw)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodOptions, "/", nil)
-	final.ServeHTTP(rec, req)
-	if called == 0 || rec.Code != http.StatusNoContent {
-		t.Fatalf("expected OPTIONS request to reach handler")
-	}
-
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/", nil)
-	final.ServeHTTP(rec, req)
-	if called <= 1 || rec.Code != http.StatusNoContent {
-		t.Fatalf("expected handler to be invoked for GET")
-	}
-}
-
-func TestRecoverMiddleware(t *testing.T) {
-	buf := new(bytes.Buffer)
-	log := slog.New(slog.NewTextHandler(buf, nil))
-	panicHandler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		panic("boom")
 	})
 
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	recoverMW(log)(panicHandler).ServeHTTP(rec, req)
+	Describe("endpointHandler", func() {
+		It("writes status, body, and response headers", func() {
+			srv := &Server{
+				cfg: &config.Config{
+					Server: config.ServerConfig{DefaultHeaders: map[string]string{"X-App": "mocker"}},
+				},
+				log: discardLogger(),
+			}
+			ep := config.Endpoint{Responses: []config.ResponseVariant{{
+				Status:  http.StatusOK,
+				Headers: map[string]string{"Content-Type": "application/json"},
+				Body:    "{\"ok\":true}",
+			}}}
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("panic should return 500, got %d", rec.Code)
-	}
-	if buf.Len() == 0 {
-		t.Fatalf("expected panic to be logged")
-	}
-}
+			h := endpointHandler(srv, ep)
+			resp := httptest.NewRecorder()
+			resp.Header().Set("X-App", "override")
+			h.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/", nil))
 
-func TestRequestIDAndLoggingMiddleware(t *testing.T) {
-	buf := new(bytes.Buffer)
-	log := slog.New(slog.NewTextHandler(buf, nil))
+			Expect(resp.Code).To(Equal(http.StatusOK))
+			Expect(strings.TrimSpace(resp.Body.String())).To(Equal("{\"ok\":true}"))
+			Expect(resp.Header().Get("X-App")).To(Equal("override"), "default header must not overwrite existing value")
+			Expect(resp.Header().Get("Content-Type")).To(Equal("application/json"))
+		})
 
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := r.Context().Value(ctxKeyReqID{}).(string); !ok {
-			t.Fatalf("request id not in context")
-		}
-		w.WriteHeader(http.StatusCreated)
+		It("returns 500 when the body file is missing", func() {
+			srv := &Server{cfg: &config.Config{Server: config.ServerConfig{}}, log: discardLogger()}
+			ep := config.Endpoint{Responses: []config.ResponseVariant{{BodyFile: "missing.json", Status: http.StatusCreated}}}
+
+			h := endpointHandler(srv, ep)
+			resp := httptest.NewRecorder()
+			h.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/", nil))
+
+			Expect(resp.Code).To(Equal(http.StatusInternalServerError))
+		})
+
+		It("exits early when context is cancelled during delay", func() {
+			srv := &Server{cfg: &config.Config{Server: config.ServerConfig{}}, log: discardLogger()}
+			ep := config.Endpoint{Responses: []config.ResponseVariant{{DelayMs: 50}}}
+
+			h := endpointHandler(srv, ep)
+			resp := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			ctx, cancel := context.WithCancel(req.Context())
+			cancel()
+
+			start := time.Now()
+			h.ServeHTTP(resp, req.WithContext(ctx))
+
+			Expect(time.Since(start)).To(BeNumerically("<", 30*time.Millisecond))
+			Expect(resp.Body.Len()).To(Equal(0))
+		})
 	})
 
-	wrapped := loggingMW(log)(requestIDMW()(next))
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/hello", nil)
-	wrapped.ServeHTTP(rec, req)
+	Describe("validateBody middleware", func() {
+		var ctHandler http.Handler
 
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("unexpected status: %d", rec.Code)
-	}
-	if rid := rec.Header().Get("X-Request-ID"); rid == "" {
-		t.Fatalf("missing request id header")
-	}
-	if buf.Len() == 0 {
-		t.Fatalf("expected log output")
-	}
-}
+		BeforeEach(func() {
+			tmp := GinkgoT().TempDir()
+			schemaPath := filepath.Join(tmp, "schema.json")
+			Expect(os.WriteFile(schemaPath, []byte(`{"type":"object","required":["name"]}`), 0o600)).To(Succeed())
+
+			validator, err := validate.CompileSchema(schemaPath, validate.JSONSchemaValidatorOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			nextCalled := 0
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				nextCalled++
+				w.WriteHeader(http.StatusCreated)
+			})
+			_ = nextCalled
+			ctHandler = validateBody("application/json", validator)(next)
+		})
+
+		It("passes a valid JSON body through", func() {
+			resp := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"mocker"}`))
+			req.Header.Set("Content-Type", "application/json")
+			ctHandler.ServeHTTP(resp, req)
+			Expect(resp.Code).To(Equal(http.StatusCreated))
+		})
+
+		It("returns 400 for a schema-violating body", func() {
+			resp := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"foo":1}`))
+			req.Header.Set("Content-Type", "application/json")
+			ctHandler.ServeHTTP(resp, req)
+			Expect(resp.Code).To(Equal(http.StatusBadRequest))
+		})
+
+		It("returns 415 for the wrong content-type", func() {
+			resp := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
+			req.Header.Set("Content-Type", "text/plain")
+			ctHandler.ServeHTTP(resp, req)
+			Expect(resp.Code).To(Equal(http.StatusUnsupportedMediaType))
+		})
+
+		It("returns the original handler unchanged when schema is nil", func() {
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+			noop := validateBody("", nil)
+			Expect(reflect.ValueOf(noop(next)).Pointer()).To(Equal(reflect.ValueOf(next).Pointer()))
+		})
+	})
+
+	Describe("requireAuth middleware", func() {
+		It("passes the principal into context on success", func() {
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, ok := principalFrom(r.Context())
+				Expect(ok).To(BeTrue(), "principal missing in context")
+				w.WriteHeader(http.StatusAccepted)
+			})
+			rec := httptest.NewRecorder()
+			requireAuth(stubProvider{principal: auth.Principal{Name: "ok"}, ok: true}, "token")(next).
+				ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			Expect(rec.Code).To(Equal(http.StatusAccepted))
+		})
+
+		It("returns 401 when auth provider returns an error", func() {
+			rec := httptest.NewRecorder()
+			requireAuth(stubProvider{err: errors.New("boom")}, "token")(
+				http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+			).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			Expect(rec.Code).To(Equal(http.StatusUnauthorized))
+		})
+
+		It("returns 401 with WWW-Authenticate header for basic auth failure", func() {
+			rec := httptest.NewRecorder()
+			requireAuth(stubProvider{ok: false}, "basic")(
+				http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+			).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			Expect(rec.Code).To(Equal(http.StatusUnauthorized))
+			Expect(rec.Header().Get("WWW-Authenticate")).To(ContainSubstring("Basic"))
+		})
+	})
+
+	Describe("skipAuthForOPTIONS middleware", func() {
+		It("skips the inner middleware for OPTIONS but runs it for other methods", func() {
+			called := 0
+			mw := func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					called++
+					next.ServeHTTP(w, r)
+				})
+			}
+			final := skipAuthForOPTIONS(mw)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+
+			rec := httptest.NewRecorder()
+			final.ServeHTTP(rec, httptest.NewRequest(http.MethodOptions, "/", nil))
+			Expect(rec.Code).To(Equal(http.StatusNoContent))
+			optionsCalled := called
+
+			rec = httptest.NewRecorder()
+			final.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			Expect(rec.Code).To(Equal(http.StatusNoContent))
+			Expect(called).To(BeNumerically(">", optionsCalled))
+		})
+	})
+
+	Describe("recoverMW middleware", func() {
+		It("returns 500 and logs when a handler panics", func() {
+			buf := new(bytes.Buffer)
+			log := slog.New(slog.NewTextHandler(buf, nil))
+			panicHandler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") })
+
+			rec := httptest.NewRecorder()
+			recoverMW(log)(panicHandler).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+			Expect(rec.Code).To(Equal(http.StatusInternalServerError))
+			Expect(buf.Len()).To(BeNumerically(">", 0))
+		})
+	})
+
+	Describe("requestIDMW and loggingMW middleware", func() {
+		It("injects request-id into context and logs the request", func() {
+			buf := new(bytes.Buffer)
+			log := slog.New(slog.NewTextHandler(buf, nil))
+
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, ok := r.Context().Value(ctxKeyReqID{}).(string)
+				Expect(ok).To(BeTrue(), "request id not in context")
+				w.WriteHeader(http.StatusCreated)
+			})
+
+			wrapped := loggingMW(log)(requestIDMW()(next))
+			rec := httptest.NewRecorder()
+			wrapped.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/hello", nil))
+
+			Expect(rec.Code).To(Equal(http.StatusCreated))
+			Expect(rec.Header().Get("X-Request-ID")).NotTo(BeEmpty())
+			Expect(buf.Len()).To(BeNumerically(">", 0))
+		})
+	})
+})

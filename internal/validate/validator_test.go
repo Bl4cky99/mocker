@@ -7,50 +7,52 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-func writeFile(t *testing.T, dir, name, contents string) string {
+func writeFile(dir, name, contents string) string {
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
-		t.Fatalf("write test file: %v", err)
-	}
+	Expect(os.WriteFile(path, []byte(contents), 0o600)).To(Succeed())
 	return path
 }
 
-func TestCompileSchemaErrors(t *testing.T) {
-	if _, err := CompileSchema("", JSONSchemaValidatorOptions{}); !errors.Is(err, ErrEmptySchema) {
-		t.Fatalf("expected empty schema error, got %v", err)
-	}
+var _ = Describe("CompileSchema", func() {
+	It("returns ErrEmptySchema for an empty path", func() {
+		_, err := CompileSchema("", JSONSchemaValidatorOptions{})
+		Expect(errors.Is(err, ErrEmptySchema)).To(BeTrue())
+	})
 
-	dir := t.TempDir()
-	bad := writeFile(t, dir, "bad.json", "{not json}")
+	It("returns ErrSchemaCompile for invalid JSON", func() {
+		dir := GinkgoT().TempDir()
+		bad := writeFile(dir, "bad.json", "{not json}")
+		_, err := CompileSchema(bad, JSONSchemaValidatorOptions{})
+		Expect(errors.Is(err, ErrSchemaCompile)).To(BeTrue())
+	})
 
-	if _, err := CompileSchema(bad, JSONSchemaValidatorOptions{}); !errors.Is(err, ErrSchemaCompile) {
-		t.Fatalf("expected compile error, got %v", err)
-	}
-}
+	Context("with a valid schema", func() {
+		var v *JSONSchemaValidator
 
-func TestCompileSchemaSuccessAndValidate(t *testing.T) {
-	dir := t.TempDir()
-	schema := writeFile(t, dir, "schema.json", `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`)
+		BeforeEach(func() {
+			dir := GinkgoT().TempDir()
+			schema := writeFile(dir, "schema.json", `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`)
+			var err error
+			v, err = CompileSchema(schema, JSONSchemaValidatorOptions{AssertFormat: true, DefaultDraft: jsonschema.Draft2020})
+			Expect(err).NotTo(HaveOccurred())
+		})
 
-	v, err := CompileSchema(schema, JSONSchemaValidatorOptions{AssertFormat: true, DefaultDraft: jsonschema.Draft2020})
-	if err != nil {
-		t.Fatalf("compile schema: %v", err)
-	}
+		It("accepts a valid instance", func() {
+			Expect(v.Validate([]byte(`{"name":"ok"}`))).To(Succeed())
+		})
 
-	if err := v.Validate([]byte(`{"name":"ok"}`)); err != nil {
-		t.Fatalf("expected valid instance, got %v", err)
-	}
+		It("returns ErrUnmarshalJSON for non-JSON input", func() {
+			Expect(errors.Is(v.Validate([]byte("not json")), ErrUnmarshalJSON)).To(BeTrue())
+		})
 
-	if err := v.Validate([]byte("not json")); !errors.Is(err, ErrUnmarshalJSON) {
-		t.Fatalf("expected unmarshal error, got %v", err)
-	}
-
-	if err := v.Validate([]byte(`{"id":1}`)); !errors.Is(err, ErrSchemaValidation) {
-		t.Fatalf("expected validation error, got %v", err)
-	}
-}
+		It("returns ErrSchemaValidation for a schema-violating instance", func() {
+			Expect(errors.Is(v.Validate([]byte(`{"id":1}`)), ErrSchemaValidation)).To(BeTrue())
+		})
+	})
+})
