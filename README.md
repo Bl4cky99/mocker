@@ -114,14 +114,14 @@ Rename the binary or move it to a directory on your `$PATH` (for example `/usr/l
 
 ### <span id="install-build">Build from source</span>
 
-Clone the repository and use the provided Makefile (or plain `go build`).
+Clone the repository and use the provided justfile (or plain `go build`).
 
 ```bash
-make build           # produces ./bin/mocker with git version metadata
-make serve           # builds & starts the server using config.yaml
+just build           # produces ./bin/mocker with git version metadata
+just serve           # builds & starts the server using config.yaml
 
-# or without Makefile
-GOFLAGS="-trimpath" go build -o bin/mocker ./cmd/mocker
+# or without just
+go build -o bin/mocker ./cmd/mocker
 ```
 
 Environment variables at build time (`VERSION`, `COMMIT`, `DATE`) are embedded into the binary. Override them when cutting releases.
@@ -421,11 +421,12 @@ Key flow:
 
 ### <span id="tests">Tests</span>
 
-Run the entire suite (race detector enabled by default in the Makefile):
+Run the entire suite (race detector enabled by default):
 
 ```bash
 go test ./...
-make test        # equivalent with -race -timeout=2m
+just test          # equivalent with -race -timeout=2m
+just test-ginkgo   # using Ginkgo for structured, verbose output
 
 # Specific packages
 go test ./internal/config -run TestLoad
@@ -434,7 +435,7 @@ go test ./internal/config -run TestLoad
 ### <span id="minimal-dev-loop">Minimal dev loop</span>
 
 ```
-make build                             # compile binary with version metadata
+just build                             # compile binary with version metadata
 ./bin/mocker serve -c config.yaml -p   # start the server with pretty logs
 curl -H 'Authorization: Bearer devtoken123' http://localhost:1337/api/healthz
 ./bin/mocker validate -c config.yaml   # ensure config stays valid
